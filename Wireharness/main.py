@@ -99,6 +99,7 @@ class MainApp(QMainWindow):
 
                 # Compare with detected classes
                 if expected_class in detected_classes:
+                    # Detected class matches the expected class
                     self.ui.label_Classes.setText(f"{expected_class} & Correct")
                     self.ui.label_Classes.setStyleSheet("background-color: green; color: white;")  # Set text color to green
                     found_match = True
@@ -107,19 +108,33 @@ class MainApp(QMainWindow):
                     ok_script_path = self.ui.textEdit_OK_output_script.toPlainText().strip()
                     if ok_script_path:
                         self.run_script_in_thread(ok_script_path)
+                    break  # Exit after finding the first match
                 else:
+                    # Detected class does not match the expected class
                     detected_class_text = ", ".join(detected_classes)
                     self.ui.label_Classes.setText(f"{detected_class_text} & Incorrect")
-                    self.ui.label_Classes.setStyleSheet("background-color: red; color: white")  # Set text color to red
+                    self.ui.label_Classes.setStyleSheet("background-color: red; color: white;")  # Set text color to red
 
                     # Run the script specified in ui.textEdit_NG_output_script
                     ng_script_path = self.ui.textEdit_NG_output_script.toPlainText().strip()
                     if ng_script_path:
                         self.run_script_in_thread(ng_script_path)
-                break  # Exit after finding the first "Match"
+                    found_match = True
+                    break  # Exit after handling mismatch
 
-        # If no match is found in the table, show "Checking . . ." with default color
-        if not found_match:
+        # If no match is found and detected_classes is not empty, handle as incorrect
+        if not found_match and detected_classes:
+            detected_class_text = ", ".join(detected_classes)
+            self.ui.label_Classes.setText(f"{detected_class_text} & Incorrect")
+            self.ui.label_Classes.setStyleSheet("color: red;")  # Set text color to red
+
+            # Run NG script for incorrect detection
+            ng_script_path = self.ui.textEdit_NG_output_script.toPlainText().strip()
+            if ng_script_path:
+                self.run_script_in_thread(ng_script_path)
+
+        # If no objects are detected, show "Checking . . ."
+        elif not detected_classes:
             self.ui.label_Classes.setText("Checking . . .")
             self.ui.label_Classes.setStyleSheet("")  # Reset to default color
 
