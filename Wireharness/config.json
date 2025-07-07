@@ -1,0 +1,18 @@
+{
+    "file_path": "D:/Dev_AI_env/Old_Scrip/yolov8n.pt",
+    "cvalue": 0.7,
+    "textEdit_OK_output_script": "",
+    "textEdit_NG_output_script": "",
+    "checkBox_signal_Alarm": false,
+    "checkBox_SoundAlarm": false,
+    "checkBox_DigitalOut": false,
+    "checkBox_DigitalIN": false,
+    "tableWidget_model_match": [
+        {
+            "Name": "asdasd",
+            "Classes": "person",
+            "Status": "Not selected",
+            "Barcode": "2H60A(SAF)-M-3RCX-A1"
+        }
+    ]
+}
