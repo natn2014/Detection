@@ -35,13 +35,15 @@ class RelayController(QMainWindow):
         container.setLayout(self.layout)
         self.setCentralWidget(container)
 
-        # Modbus TCP socket
+        # Modbus TCP socket and relay states
         self.sock = None
+        self.relay1_state = False  # False = OFF, True = ON
+        self.relay2_state = False  # False = OFF, True = ON
 
     def connect_to_device(self):
         """Connect to the Modbus TCP device."""
         try:
-            MODBUS_DEVICE_IP = "192.168.1.200"  # Replace with your relay's IP
+            MODBUS_DEVICE_IP = "192.168.0.100"  # Replace with your relay's IP
             MODBUS_DEVICE_PORT = 502           # Replace with your relay's port
 
             # Create and connect the socket
@@ -67,23 +69,33 @@ class RelayController(QMainWindow):
 
     def toggle_relay1(self):
         """Toggle Relay CH1."""
-        # Example: Toggle Relay CH1 using HEX commands
-        relay1_on = "00 00 00 00 00 06 01 05 00 00 FF 00"  # Relay CH1 ON
-        relay1_off = "00 00 00 00 00 06 01 05 00 00 00 00"  # Relay CH1 OFF
-
-        # Logic to toggle (you can improve this with state tracking if needed)
-        self.send_modbus_command(relay1_on)  # Send ON command
-        self.send_modbus_command(relay1_off)  # Send OFF command
+        if self.relay1_state:
+            # Turn Relay CH1 OFF
+            relay1_off = "00 00 00 00 00 06 01 05 00 00 00 00"
+            self.send_modbus_command(relay1_off)
+            self.relay1_state = False
+            print("Relay CH1 is now OFF")
+        else:
+            # Turn Relay CH1 ON
+            relay1_on = "00 00 00 00 00 06 01 05 00 00 FF 00"
+            self.send_modbus_command(relay1_on)
+            self.relay1_state = True
+            print("Relay CH1 is now ON")
 
     def toggle_relay2(self):
         """Toggle Relay CH2."""
-        # Example: Toggle Relay CH2 using HEX commands
-        relay2_on = "00 00 00 00 00 06 01 05 00 01 FF 00"  # Relay CH2 ON
-        relay2_off = "00 00 00 00 00 06 01 05 00 01 00 00"  # Relay CH2 OFF
-
-        # Logic to toggle (you can improve this with state tracking if needed)
-        self.send_modbus_command(relay2_on)  # Send ON command
-        self.send_modbus_command(relay2_off)  # Send OFF command
+        if self.relay2_state:
+            # Turn Relay CH2 OFF
+            relay2_off = "00 00 00 00 00 06 01 05 00 01 00 00"
+            self.send_modbus_command(relay2_off)
+            self.relay2_state = False
+            print("Relay CH2 is now OFF")
+        else:
+            # Turn Relay CH2 ON
+            relay2_on = "00 00 00 00 00 06 01 05 00 01 FF 00"
+            self.send_modbus_command(relay2_on)
+            self.relay2_state = True
+            print("Relay CH2 is now ON")
 
     def closeEvent(self, event):
         """Close the Modbus socket when the application is closed."""
