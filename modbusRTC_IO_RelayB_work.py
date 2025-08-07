@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Waveshare Modbus POE ethernet relay board. See https://www.waveshare.com/wiki/Modbus_POE_ETH_Relay.
 See docs for changing the IP address & configuration settings.
-
 """
 import socket               
 import time
@@ -67,8 +66,6 @@ class Relay():
         self.sock = socket.socket()
         # connect to device
         self.sock.connect((self.host, self.port))
-
- 
 
     def disconnect(self):
         """Disconnect from the device."""
@@ -191,7 +188,7 @@ class Relay():
 
         cmd = [0x01, 0x05 ,0 ,0, 0xFF, 0 ]
         self._write(cmd)
-        print(f"Command sent: {cmd}")
+        #print(f"Command sent: {cmd}")
         print(f"Expected response: {bytearray(cmd)}")
         # Check if the response matches the command sent
         print(f"Response received: {self.sock.recv(8)}")
@@ -208,7 +205,7 @@ class Relay():
         #print("Checking DI status...")
         cmd = [0x01, 0x02, 0x00, 0x00, 0x00, 0x08]
         self._write(cmd)
-        print(f"Command sent: {cmd}")
+        #print(f"Command sent: {cmd}")
         response = self.sock.recv(6)
         #print(f"Expected response: {bytearray(cmd)}, received: {response}")
 
@@ -217,15 +214,52 @@ class Relay():
 
         di_status = response[3]
         for i in range(8):
-            status = "ON" if di_status & (1 << i) else "OFF"
-            print(f"DI{i+1} is {status}")
-
+            if di_status & (1 << i):
+                print(f"DI{i+1} is ON")
         return di_status
+    
+    def DI_on_Relay(self, channel: int):
+        """Turn on the relay channel if the corresponding DI is ON.
+
+        Args:
+            channel: channel number.
+        """
+        if channel not in self.channels:
+            raise ValueError(f'Provided channel [{channel}] not in [{self.channels}] for device [{self}].')
+
+        di_status = self.check_DI()
+        if di_status & (1 << (channel - 1)):
+            self.on(channel)
+            print(f"Relay channel {channel} turned ON because DI{channel} is ON.")
+        else:
+            print(f"Relay channel {channel} remains OFF because DI{channel} is OFF.")
+            self.off(channel)
+
+    def is_DI_on(self, di_number: int) -> bool:
+        """Return True if the specified DI number (1-8) is ON, else False."""
+        if di_number < 1 or di_number > 8:
+            raise ValueError("DI number must be between 1 and 8")
+
+        # send command and receive status as usual
+        cmd = [0x01, 0x02, 0x00, 0x00, 0x00, 0x08]
+        self._write(cmd)
+        response = self.sock.recv(6)
+
+        if len(response) != 6:
+            raise RuntimeError(f"Invalid response length: expected 6, got {len(response)}")
+
+        di_status = response[3]
+
+        # Check if bit for di_number is set
+        return bool(di_status & (1 << (di_number - 1)))
+
 
     def check_DI_periodic(self):
         while True:
             self.check_DI()
+            self.DI_on_Relay(1)
             time.sleep(0.5)
+            
 
     def start_check_DI_thread(self):
         thread = threading.Thread(target=self.check_DI_periodic, daemon=True)
@@ -241,3 +275,5 @@ if __name__ == '__main__':
         relay.start_check_DI_thread()
         time.sleep(5)  # Allow some time for periodic DI checks
         relay.check_DI_periodic()
+
+
