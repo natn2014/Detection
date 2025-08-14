@@ -1,0 +1,196 @@
+import sys
+import cv2
+import threading
+import time
+from PySide6.QtWidgets import (
+    QApplication, QLabel, QMainWindow, QGridLayout, QWidget, QPushButton, QVBoxLayout, QHBoxLayout
+)
+from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtCore import Qt, QTimer
+from ultralytics import YOLO  # YOLOv8 import
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from relay import Relay  # Import the Relay class
+
+# Load YOLOv8 model (ensure you have YOLOv8 installed via `pip install ultralytics`)
+model = YOLO("yolov8n.pt")  # Replace with your model file (e.g., yolov8x.pt)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Multi-Camera YOLOv8 Object Detection with Relay Integration")
+        self.setGeometry(100, 100, 1600, 900)
+
+        # Relay for DI control
+        self.relay = Relay(host="192.168.1.254")  # Replace with your relay's IP address
+
+        # State variables
+        self.inspection_running = False
+        self.ng_counts = {"Top Left": 0, "Top Right": 0, "Bottom Left": 0, "Bottom Right": 0}
+        self.total_ok_count = 0
+        self.total_ng_count = 0
+        self.start_time = None
+        self.previous_start_time = None
+        self.inspection_durations = []  # Duration between Start and Finish
+        self.start_to_start_times = []  # Duration between consecutive Start signals
+        self.blink_state = False  # State for blinking
+        self.ng_thumbnails = []  # List of NG thumbnail frames
+
+        # Flags to ensure NG is counted only once per camera per inspection
+        self.camera_ng_flags = {"Top Left": False, "Top Right": False, "Bottom Left": False, "Bottom Right": False}
+
+        # Timer for blinking the Start button
+        self.blink_timer = QTimer(self)
+        self.blink_timer.timeout.connect(self.toggle_start_button_color)
+
+        # Central widget and layout
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.main_layout = QGridLayout(self.central_widget)
+
+        # Camera sections
+        self.camera_labels = {}
+        self.status_labels = {}
+        self.ng_count_labels = {}
+
+        camera_positions = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"]
+        for i, position in enumerate(camera_positions):
+            camera_label = QLabel(self)
+            camera_label.setFixedSize(500, 350)
+            camera_label.setStyleSheet("border: 2px solid black; background-color: #f0f0f0;")
+            camera_label.setAlignment(Qt.AlignCenter)
+
+            status_label = QLabel(position, self)
+            status_label.setAlignment(Qt.AlignCenter)
+            status_label.setStyleSheet("background-color: gray; color: white; font-size: 16px; font-weight: bold; padding: 5px;")
+
+            self.main_layout.addWidget(status_label, i // 2 * 2, i % 2)
+            self.main_layout.addWidget(camera_label, i // 2 * 2 + 1, i % 2)
+
+            self.camera_labels[position] = camera_label
+            self.status_labels[position] = status_label
+
+        # NG Counter section on the right side
+        self.ng_layout = QVBoxLayout()
+        self.ng_layout.setAlignment(Qt.AlignTop)
+        self.ng_layout.setSpacing(15)
+
+        # NG counters per camera
+        for position in camera_positions:
+            ng_label = QLabel(f"{position} NG = 0 Pcs", self)
+            ng_label.setAlignment(Qt.AlignLeft)
+            ng_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
+            self.ng_layout.addWidget(ng_label)
+            self.ng_count_labels[position] = ng_label
+
+        # Total OK and NG counters
+        self.total_ok_label = QLabel("Total OK = 0 Pcs", self)
+        self.total_ok_label.setAlignment(Qt.AlignLeft)
+        self.total_ok_label.setStyleSheet("font-size: 18px; font-weight: bold; color: green;")
+        self.ng_layout.addWidget(self.total_ok_label)
+
+        self.total_ng_label = QLabel("Total NG = 0 Pcs", self)
+        self.total_ng_label.setAlignment(Qt.AlignLeft)
+        self.total_ng_label.setStyleSheet("font-size: 18px; font-weight: bold; color: red;")
+        self.ng_layout.addWidget(self.total_ng_label)
+
+        # Add Start and Finish buttons
+        button_layout = QHBoxLayout()
+        self.start_button = QPushButton("Start Inspection", self)
+        self.start_button.setStyleSheet("font-size: 16px; padding: 10px; background-color: #4CAF50; color: white;")
+        self.start_button.clicked.connect(self.start_inspection)
+
+        self.finish_button = QPushButton("Finish Inspection", self)
+        self.finish_button.setStyleSheet("font-size: 16px; padding: 10px; background-color: #f44336; color: white;")
+        self.finish_button.clicked.connect(self.finish_inspection)
+
+        button_layout.addWidget(self.start_button)
+        button_layout.addWidget(self.finish_button)
+
+        # Add NG thumbnails area
+        self.thumbnail_layout = QHBoxLayout()
+        self.thumbnail_labels = [QLabel(self) for _ in range(4)]  # Create 4 thumbnail slots
+        for label in self.thumbnail_labels:
+            label.setFixedSize(150, 100)
+            label.setStyleSheet("border: 1px solid black; background-color: #e0e0e0;")
+            label.setAlignment(Qt.AlignCenter)
+            self.thumbnail_layout.addWidget(label)
+
+        self.ng_layout.addLayout(button_layout)
+        self.ng_layout.addLayout(self.thumbnail_layout)
+
+        # Add a graph for inspection durations
+        self.figure = Figure()
+        self.canvas = FigureCanvas(self.figure)
+        self.ng_layout.addWidget(self.canvas)
+
+        # Add NG layout to the right side of the screen
+        self.main_layout.addLayout(self.ng_layout, 0, 2, 4, 1)
+
+        # Camera threads
+        self.camera_threads = {}
+        self.camera_indices = {
+            "Top Left": 0,  # USB camera index 0
+            "Top Right": 1,  # USB camera index 1
+            "Bottom Left": 2,  # USB camera index 2
+            "Bottom Right": 3,  # USB camera index 3
+        }
+
+        self.start_cameras()
+
+        # Start relay DI monitoring in a thread
+        self.start_relay_monitoring_thread()
+
+    def start_relay_monitoring_thread(self):
+        """Start a thread to monitor DI1 and DI2 for start and finish inspection signals."""
+        thread = threading.Thread(target=self.monitor_relay_inputs, daemon=True)
+        thread.start()
+        print("Started relay monitoring thread.")
+
+    def monitor_relay_inputs(self):
+        """Monitor DI1 and DI2 for signals to start and stop inspection."""
+        self.relay.connect()
+        try:
+            while True:
+                if self.relay.is_DI_on(1):  # Check if DI1 is ON
+                    if not self.inspection_running:  # Avoid multiple starts
+                        print("DI1 ON detected. Starting inspection.")
+                        self.start_inspection()
+                if self.relay.is_DI_on(2):  # Check if DI2 is ON
+                    if self.inspection_running:  # Avoid multiple stops
+                        print("DI2 ON detected. Finishing inspection.")
+                        self.finish_inspection()
+                time.sleep(0.5)
+        finally:
+            self.relay.disconnect()
+
+    def start_cameras(self):
+        for position, index in self.camera_indices.items():
+            thread = threading.Thread(target=self.camera_thread, args=(position, index))
+            thread.daemon = True
+            thread.start()
+            self.camera_threads[position] = thread
+
+    def start_inspection(self):
+        self.inspection_running = True
+        self.blink_timer.start(500)  # Start blinking every 0.5 seconds
+        print("Inspection started.")
+
+    def finish_inspection(self):
+        if not self.inspection_running:
+            return
+
+        self.inspection_running = False
+        self.blink_timer.stop()  # Stop blinking
+        self.start_button.setStyleSheet("font-size: 16px; padding: 10px; background-color: #4CAF50; color: white;")  # Reset button color
+        print("Inspection finished.")
+
+    # Other methods (camera_thread, toggle_start_button_color, etc.) remain unchanged
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
