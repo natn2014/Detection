@@ -8,7 +8,20 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from ultralytics import YOLO  # YOLOv8 import
-from relay import Relay  # Import the Relay class
+from relay_b import Relay  # Import the Relay class
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+
+## READ ME ##
+# Change part of "yolov8n.pt" to custom model
+# Check IP Of Relay standard is 192.168.1.200 or 192.168.1.254
+# Jetson orin must be config same IP gateway
+## IO Connect ##
+# Trigger Start = DI pin 1
+# Trigger Finish = DI pin 2
+# Result OK = Channel 4 ON (1sec)
+# Result Off = Channel 5 Off (1sec)
+# Modify OK and NG class at line
 
 # Load YOLOv8 model (ensure you have YOLOv8 installed via `pip install ultralytics`)
 model = YOLO("yolov8n.pt")  # Replace with your model file (e.g., yolov8x.pt)
@@ -24,15 +37,25 @@ class RelayWorker(QObject):
         self.relay = relay
         self.running = True  # Control flag for the thread
 
+
     def monitor_relay_inputs(self):
         """Monitor DI1 and DI2 for signals to start and stop inspection."""
         self.relay.connect()
+        self.relay.all_on()
+        time.sleep(0.5)  # Allow time for the relay to initialize
+        self.relay.all_off()
+        time.sleep(0.5)  # Ensure all relays are off before starting
+        print("Started monitoring relay inputs.")
         try:
             while self.running:
                 if self.relay.is_DI_on(1):  # Check if DI1 is ON
                     self.start_signal.emit()  # Emit start signal
-                if self.relay.is_DI_on(2):  # Check if DI2 is ON
+                    print("DI1 is ON, starting inspection.")
+
+                elif self.relay.is_DI_on(2):  # Check if DI2 is ON
+                    print("DI2 is ON, stopping inspection.")
                     self.finish_signal.emit()  # Emit finish signal
+
                 time.sleep(0.5)
         finally:
             self.relay.disconnect()
@@ -45,7 +68,7 @@ class RelayWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Multi-Camera YOLOv8 Object Detection with Relay Integration")
+        self.setWindowTitle("AGC Water Leakage Detection System")
         self.setGeometry(100, 100, 1600, 900)
 
         # Relay for DI control
@@ -178,10 +201,34 @@ class MainWindow(QMainWindow):
         thread.start()
         print("Started relay monitoring thread.")
 
+    def start_cameras(self):
+        for position, index in self.camera_indices.items():
+            thread = threading.Thread(target=self.camera_thread, args=(position, index))
+            thread.daemon = True
+            thread.start()
+            self.camera_threads[position] = thread
+
     def start_inspection(self):
         self.inspection_running = True
         self.blink_timer.start(500)  # Start blinking every 0.5 seconds
+        
         print("Inspection started.")
+
+        # Reset NG flags for all cameras
+        for position in self.camera_ng_flags:
+            self.camera_ng_flags[position] = False
+
+        current_time = time.time()
+
+        # Calculate start-to-start duration and store it
+        if self.previous_start_time is not None:
+            start_to_start_duration = round(current_time - self.previous_start_time)
+            self.start_to_start_times.append(start_to_start_duration)
+        self.previous_start_time = current_time  # Update the previous start time
+
+        self.start_time = current_time  # Record the current start time
+        for position in self.ng_counts:
+            self.update_ng_label(position)  # Reset NG labels visually
 
     def finish_inspection(self):
         if not self.inspection_running:
@@ -190,9 +237,162 @@ class MainWindow(QMainWindow):
         self.inspection_running = False
         self.blink_timer.stop()  # Stop blinking
         self.start_button.setStyleSheet("font-size: 16px; padding: 10px; background-color: #4CAF50; color: white;")  # Reset button color
-        print("Inspection finished.")
 
-    # Other methods (camera_thread, toggle_start_button_color, etc.) remain unchanged
+        end_time = time.time()  # Record the end time
+        duration = round(end_time - self.start_time)  # Calculate duration (in whole seconds)
+        self.inspection_durations.append(duration)  # Add duration to the list
+
+        # Check if any NG was detected during the inspection
+        if sum(self.camera_ng_flags.values()) > 0:
+            self.total_ng_count += sum(self.camera_ng_flags.values())  # Add NG counts from cameras that flagged NG during this inspection
+            self.relay.on(5) #Turn Relay5 On when NG Found
+        else:
+            self.total_ok_count += 1  # Increment OK counter only if no NG was detected
+            self.relay.on(4) #Turn Relay4 On When OK
+
+        self.update_total_counters()
+
+        for position in self.status_labels:
+            if self.camera_ng_flags[position]:
+                self.update_status(position, "NG Detected", "red")
+            else:
+                self.update_status(position, "OK (Inspection Finished)", "green")
+
+        self.update_graph()
+        time.sleep(2)
+        self.relay.off(4)
+        self.relay.off(5)
+
+
+    def toggle_start_button_color(self):
+        if self.inspection_running:
+            self.blink_state = not self.blink_state
+            if self.blink_state:
+
+                self.start_button.setStyleSheet("font-size: 16px; padding: 10px; background-color: #FF0000; color: white;")  # Red color
+            else:
+                self.start_button.setStyleSheet("font-size: 16px; padding: 10px; background-color: #4CAF50; color: white;")  # Green color
+
+    def camera_thread(self, position, index):
+        cap = None
+        try:
+            cap = cv2.VideoCapture(index)
+            if not cap.isOpened():
+                raise Exception(f"Failed to connect to {position} camera.")
+        except Exception as e:
+            print(f"Error: {e}")
+            self.update_status(position, "Connection Failed", "red")
+            return
+
+        while True:
+            ret, frame = cap.read()
+            if ret:
+                frame_with_boxes, detected_classes = self.perform_detection(frame)
+
+                # Update GUI
+                self.update_camera_feed(position, frame_with_boxes)
+
+                if self.inspection_running:
+                    # Check if NG is detected and hasn't been counted yet
+                    if "person" in detected_classes and not self.camera_ng_flags[position]:  # "class2" is NG Modify This "person" to "Leak"
+                        self.camera_ng_flags[position] = True  # Flag NG for this camera
+                        self.ng_counts[position] += 1  # Increment NG count for the specific camera
+                        self.update_ng_label(position)
+                        self.update_status(position, "NG Detected", "red")
+                        self.capture_thumbnail(frame)  # Capture the frame as a thumbnail
+                    elif "class1" in detected_classes:  # "class1" is OK Modify this to "class that = OK"
+                        self.update_status(position, "OK", "green")
+                    else:
+                        self.update_status(position, "Checking. . .", "gray")
+            else:
+                self.update_status(position, "Disconnected", "red")
+                break
+
+        cap.release()
+
+    def perform_detection(self, frame):
+        # Perform YOLOv8 inference
+        results = model.predict(frame, conf=0.5, verbose=False)
+        detected_classes = []
+
+        for detection in results[0].boxes.data:
+            # Extract bounding box coordinates, confidence, and class ID
+            x1, y1, x2, y2, conf, class_id = detection
+            class_id = int(class_id)  # Convert class ID to integer
+            class_name = model.names[class_id]  # Get class name
+            detected_classes.append(class_name)
+
+            # Draw bounding box and label on the frame
+            color = (0, 255, 0) if class_name == "class1" else (0, 0, 255)  # Green for class1, red for class2
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+            label = f"{class_name} {conf:.2f}"
+            cv2.putText(frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+        return frame, detected_classes
+
+    def capture_thumbnail(self, frame):
+        # Convert the frame to QImage and then to QPixmap for display as thumbnail
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_frame.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_image).scaled(150, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        # Add the pixmap to the thumbnails list
+        self.ng_thumbnails.append(pixmap)
+        if len(self.ng_thumbnails) > 4:  # Keep only the last 4 thumbnails
+            self.ng_thumbnails.pop(0)
+
+        # Update the thumbnail labels
+        for i, label in enumerate(self.thumbnail_labels):
+            if i < len(self.ng_thumbnails):
+                label.setPixmap(self.ng_thumbnails[i])
+            else:
+                label.clear()  # Clear unused labels
+
+    def update_camera_feed(self, position, frame):
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_frame.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_image)
+
+        self.camera_labels[position].setPixmap(pixmap)
+
+    def update_status(self, position, status, color):
+        self.status_labels[position].setText(status)
+        self.status_labels[position].setStyleSheet(f"background-color: {color}; color: white; font-size: 16px; font-weight: bold;")
+
+    def update_ng_label(self, position):
+        self.ng_count_labels[position].setText(f"{position} NG = {self.ng_counts[position]} Pcs")
+
+    def update_total_counters(self):
+        self.total_ok_label.setText(f"Total OK = {self.total_ok_count} Pcs")
+        self.total_ng_label.setText(f"Total NG = {self.total_ng_count} Pcs")
+
+    def update_graph(self):
+        ax = self.figure.add_subplot(111)
+        ax.clear()  # Clear the previous graph
+
+        # Plot inspection durations
+        ax.plot(range(1, len(self.inspection_durations) + 1), self.inspection_durations, marker="o", color="b", label="Inspection Duration")
+
+        # Plot start-to-start durations
+        if len(self.start_to_start_times) > 0:
+            ax.plot(range(1, len(self.start_to_start_times) + 1), self.start_to_start_times, marker="x", color="g", label="Start-to-Start Time")
+
+        # Add grid to the grap
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5)
+
+        ax.set_title("Inspection Cycle Time")
+        ax.set_ylabel("Time (seconds)")
+        ax.set_xlim(1, max(len(self.inspection_durations), len(self.start_to_start_times)))  # Limit X-axis dynamically
+        ax.set_ylim(0, 240)  # Set Y-axis limit to a maximum of 240 seconds
+        ax.set_xticks([])  # Remove X-axis labels
+        ax.set_yticks(range(0, 241, 20))  # Y-axis ticks every 20 seconds
+        ax.legend(loc="upper right")  # Add a legend to distinguish the lines
+        self.canvas.draw()
+
 
 
 if __name__ == "__main__":
