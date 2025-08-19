@@ -87,6 +87,8 @@ class VideoOCRApp(QWidget):
         self.data_table = QTableWidget()
         self.data_table.setColumnCount(2)
         self.data_table.setHorizontalHeaderLabels(["Text to Compare", "Result"])
+        self.data_table.setColumnWidth(0, 300)
+        self.data_table.horizontalHeader().setStretchLastSection(True)
         self.data_table.setEditTriggers(QTableWidget.NoEditTriggers)  # Disable editing by default
 
         # Buttons for Save, Edit, Cancel, and Perform OCR
@@ -191,41 +193,25 @@ class VideoOCRApp(QWidget):
         except Exception as e:
             print(f"Error loading JSON file: {e}")
 
-    def populate_table(self, data, table):
-        """Populate the QTableWidget with data and show matching status."""
+    def populate_table(self, data, table, detected_texts=None):
+        """Populate the QTableWidget with data and optionally show match status."""
         table.setRowCount(0)
-        table.setColumnWidth(0, 300)  # Adjust column width for readability
-        table.setColumnWidth(1, 200)
-
         for item in data:
             row_position = table.rowCount()
             table.insertRow(row_position)
-
-            # Add the text to compare in the first column
             table.setItem(row_position, 0, QTableWidgetItem(item))
-
-            # Check match status with detected_texts from OCR
-            match_status = "No Match"
-            color = QColor(255, 0, 0)  # Default to red for no match
-
-            for detected_text in self.detected_texts:
-                if item.upper() == detected_text:
-                    match_status = "Match"
-                    color = QColor(0, 255, 0)  # Green for match
-                    break
-                elif item.upper() in detected_text or detected_text in item.upper():
-                    match_status = "Partial Match"
-                    color = QColor(255, 255, 0)  # Yellow for partial match
-                    break
-
-            # Add the match status to the second column
-            result_item = QTableWidgetItem(match_status)
-            table.setItem(row_position, 1, result_item)
-
-            # Set background color for both columns in the row
-            table.item(row_position, 0).setBackground(color)
-            table.item(row_position, 1).setBackground(color)
-
+            # If detected_texts provided, compare and set result
+            result = ""
+            if detected_texts is not None:
+                item_upper = item.upper()
+                if item_upper in detected_texts:
+                    result = "Match"
+                elif any(item_upper in dt or dt in item_upper for dt in detected_texts):
+                    result = "Partial Match"
+                else:
+                    result = "Not Found"
+                table.setItem(row_position, 1, QTableWidgetItem(result))
+        table.setEditTriggers(QTableWidget.NoEditTriggers)  # Disable editing by default
 
     def enable_table_editing(self):
         """Enable editing in the monitor table."""
@@ -318,18 +304,18 @@ class VideoOCRApp(QWidget):
 
         # Perform OCR on the frame
         results = self.reader.readtext(frame, detail=1, paragraph=False)
-        self.detected_texts = []  # Store detected texts for comparison
+        detected_texts = []
 
         # Draw rectangles and put text above them
         for (bbox, text, _) in results:
-            self.detected_texts.append(text.upper())
+            detected_texts.append(text.upper())
             # Extract bounding box coordinates
             top_left = tuple(map(int, bbox[0]))  # Top-left corner
             bottom_right = tuple(map(int, bbox[2]))  # Bottom-right corner
-
+    
             # Draw the rectangle around the detected text
             cv2.rectangle(frame, top_left, bottom_right, (255, 255, 0), 1)
-
+    
             # Put the OCR-detected text above the rectangle
             cv2.putText(
                 frame,
@@ -341,19 +327,21 @@ class VideoOCRApp(QWidget):
                 1,
                 cv2.LINE_AA,
             )
-
+    
         # Ensure the frame with rectangles is displayed
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert color format for PySide6 display
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self.video_label.setPixmap(QPixmap.fromImage(qt_image))
-        print("OCR performed, detected texts:", self.detected_texts)
+        print("OCR performed, detected texts:", detected_texts)
 
-        # Wait for 2 seconds before resuming the video feed
+        # Update table with match status
+        self.populate_table(self.original_data, self.data_table, detected_texts)
+
+        # Wait for a short duration to allow the user to see the results
         QTimer.singleShot(2000, self.resume_video_feed)
-    
-    
+
     def resume_video_feed(self):
         self.is_ocr_processing = False
 
@@ -389,6 +377,8 @@ class VideoOCRApp(QWidget):
         except Exception as e:
             print(f"Error saving JSON file: {e}")
 
+
+        
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = VideoOCRApp()
