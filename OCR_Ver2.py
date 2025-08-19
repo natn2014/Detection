@@ -41,7 +41,7 @@ class VideoOCRApp(QWidget):
         self.setLayout(layout)
 
         # Initialize video capture
-        self.cap = cv2.VideoCapture(1)
+        self.cap = cv2.VideoCapture(0)
         if not self.cap.isOpened():
             print("Error: Unable to access the camera.")
             sys.exit()
@@ -183,6 +183,7 @@ class VideoOCRApp(QWidget):
                 data = json.load(file)
                 self.original_data = data.copy()  # Keep a copy for rollback
                 self.populate_table(data, self.data_table)
+                print(f"Loaded data Texts: {data}")
         except FileNotFoundError:
             # If the file does not exist, create a new one
             self.original_data = []
@@ -270,6 +271,7 @@ class VideoOCRApp(QWidget):
                 
             else:
                 print("Error: Unable to read frame.")
+
     def perform_ocr(self):
         """Perform OCR, draw rectangles around detected text, and display results."""
         if self.is_ocr_processing:
@@ -280,7 +282,7 @@ class VideoOCRApp(QWidget):
         ret, frame = self.cap.read()
         if not ret:
             print("Error: Unable to capture frame.")
-            self.is_ocr_processing = False
+            self.is_ocr_processing = True
             return
     
         # Resize the frame to match the camera's original aspect ratio
@@ -298,7 +300,7 @@ class VideoOCRApp(QWidget):
             bottom_right = tuple(map(int, bbox[2]))  # Bottom-right corner
     
             # Draw the rectangle around the detected text
-            cv2.rectangle(frame, top_left, bottom_right, (0, 255, 0), 2)
+            cv2.rectangle(frame, top_left, bottom_right, (255, 255, 0), 1)
     
             # Put the OCR-detected text above the rectangle
             cv2.putText(
@@ -306,9 +308,9 @@ class VideoOCRApp(QWidget):
                 text.upper(),
                 (top_left[0], max(0, top_left[1] - 10)),  # Ensure text is above rectangle and within frame
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2,
+                0.4,
+                (255, 255, 0),
+                1,
                 cv2.LINE_AA,
             )
     
@@ -319,24 +321,8 @@ class VideoOCRApp(QWidget):
         qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self.video_label.setPixmap(QPixmap.fromImage(qt_image))
         print("OCR performed, detected texts:", detected_texts)
+        #detected_texts is a list of all detected texts in uppercase
     
-        # Update the table with detected texts
-        for row in range(self.data_table.rowCount()):
-            item = self.data_table.item(row, 0)
-            result_item = self.data_table.item(row, 1)
-            if item and result_item:
-                table_text = item.text()
-                if table_text in detected_texts:
-                    result_item.setText("Match")
-                    result_item.setBackground(QColor(Qt.green))
-                elif any(word in table_text for word in detected_texts):
-                    result_item.setText("Partial Match")
-                    result_item.setBackground(QColor(Qt.yellow))
-                else:
-                    result_item.setText("No Match")
-                    result_item.setBackground(QColor(Qt.red))
-    
-        self.is_ocr_processing = False
         # Wait for 2 seconds before resuming the video feed
         QTimer.singleShot(2000, self.resume_video_feed)
 
@@ -347,7 +333,6 @@ class VideoOCRApp(QWidget):
         """Release resources on closing."""
         self.cap.release()
         super().closeEvent(event)
-
 
     def save_json_data(self):
         """Save the edited data back to the JSON file."""
@@ -375,7 +360,6 @@ class VideoOCRApp(QWidget):
             self.cancel_button.setEnabled(False)
         except Exception as e:
             print(f"Error saving JSON file: {e}")
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
