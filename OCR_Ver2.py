@@ -270,37 +270,36 @@ class VideoOCRApp(QWidget):
                 
             else:
                 print("Error: Unable to read frame.")
-
     def perform_ocr(self):
         """Perform OCR, draw rectangles around detected text, and display results."""
         if self.is_ocr_processing:
             return
         self.is_ocr_processing = True
-
+    
         # Freeze the current frame
         ret, frame = self.cap.read()
         if not ret:
             print("Error: Unable to capture frame.")
             self.is_ocr_processing = False
             return
-
+    
         # Resize the frame to match the camera's original aspect ratio
         frame = cv2.resize(frame, (self.camera_width, self.camera_height))
-
+    
         # Perform OCR on the frame
         results = self.reader.readtext(frame, detail=1, paragraph=False)
         detected_texts = []
-
+    
         # Draw rectangles and put text above them
         for (bbox, text, _) in results:
             detected_texts.append(text.upper())
             # Extract bounding box coordinates
             top_left = tuple(map(int, bbox[0]))  # Top-left corner
             bottom_right = tuple(map(int, bbox[2]))  # Bottom-right corner
-
+    
             # Draw the rectangle around the detected text
             cv2.rectangle(frame, top_left, bottom_right, (0, 255, 0), 2)
-
+    
             # Put the OCR-detected text above the rectangle
             cv2.putText(
                 frame,
@@ -312,15 +311,15 @@ class VideoOCRApp(QWidget):
                 2,
                 cv2.LINE_AA,
             )
-
-        # Display the frame with OCR results
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+        # Ensure the frame with rectangles is displayed
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert color format for PySide6 display
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self.video_label.setPixmap(QPixmap.fromImage(qt_image))
         print("OCR performed, detected texts:", detected_texts)
-
+    
         # Update the table with detected texts
         for row in range(self.data_table.rowCount()):
             item = self.data_table.item(row, 0)
@@ -336,7 +335,7 @@ class VideoOCRApp(QWidget):
                 else:
                     result_item.setText("No Match")
                     result_item.setBackground(QColor(Qt.red))
-
+    
         self.is_ocr_processing = False
         # Wait for 2 seconds before resuming the video feed
         QTimer.singleShot(2000, self.resume_video_feed)
