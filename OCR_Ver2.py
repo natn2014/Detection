@@ -192,12 +192,40 @@ class VideoOCRApp(QWidget):
             print(f"Error loading JSON file: {e}")
 
     def populate_table(self, data, table):
-        """Populate the QTableWidget with data."""
+        """Populate the QTableWidget with data and show matching status."""
         table.setRowCount(0)
+        table.setColumnWidth(0, 300)  # Adjust column width for readability
+        table.setColumnWidth(1, 200)
+
         for item in data:
             row_position = table.rowCount()
             table.insertRow(row_position)
+
+            # Add the text to compare in the first column
             table.setItem(row_position, 0, QTableWidgetItem(item))
+
+            # Check match status with detected_texts from OCR
+            match_status = "No Match"
+            color = QColor(255, 0, 0)  # Default to red for no match
+
+            for detected_text in self.detected_texts:
+                if item.upper() == detected_text:
+                    match_status = "Match"
+                    color = QColor(0, 255, 0)  # Green for match
+                    break
+                elif item.upper() in detected_text or detected_text in item.upper():
+                    match_status = "Partial Match"
+                    color = QColor(255, 255, 0)  # Yellow for partial match
+                    break
+
+            # Add the match status to the second column
+            result_item = QTableWidgetItem(match_status)
+            table.setItem(row_position, 1, result_item)
+
+            # Set background color for both columns in the row
+            table.item(row_position, 0).setBackground(color)
+            table.item(row_position, 1).setBackground(color)
+
 
     def enable_table_editing(self):
         """Enable editing in the monitor table."""
@@ -277,31 +305,31 @@ class VideoOCRApp(QWidget):
         if self.is_ocr_processing:
             return
         self.is_ocr_processing = True
-    
+
         # Freeze the current frame
         ret, frame = self.cap.read()
         if not ret:
             print("Error: Unable to capture frame.")
             self.is_ocr_processing = True
             return
-    
+
         # Resize the frame to match the camera's original aspect ratio
         frame = cv2.resize(frame, (self.camera_width, self.camera_height))
-    
+
         # Perform OCR on the frame
         results = self.reader.readtext(frame, detail=1, paragraph=False)
-        detected_texts = []
-    
+        self.detected_texts = []  # Store detected texts for comparison
+
         # Draw rectangles and put text above them
         for (bbox, text, _) in results:
-            detected_texts.append(text.upper())
+            self.detected_texts.append(text.upper())
             # Extract bounding box coordinates
             top_left = tuple(map(int, bbox[0]))  # Top-left corner
             bottom_right = tuple(map(int, bbox[2]))  # Bottom-right corner
-    
+
             # Draw the rectangle around the detected text
             cv2.rectangle(frame, top_left, bottom_right, (255, 255, 0), 1)
-    
+
             # Put the OCR-detected text above the rectangle
             cv2.putText(
                 frame,
@@ -313,19 +341,19 @@ class VideoOCRApp(QWidget):
                 1,
                 cv2.LINE_AA,
             )
-    
+
         # Ensure the frame with rectangles is displayed
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert color format for PySide6 display
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         qt_image = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self.video_label.setPixmap(QPixmap.fromImage(qt_image))
-        print("OCR performed, detected texts:", detected_texts)
-        #detected_texts is a list of all detected texts in uppercase
-    
+        print("OCR performed, detected texts:", self.detected_texts)
+
         # Wait for 2 seconds before resuming the video feed
         QTimer.singleShot(2000, self.resume_video_feed)
-
+    
+    
     def resume_video_feed(self):
         self.is_ocr_processing = False
 
