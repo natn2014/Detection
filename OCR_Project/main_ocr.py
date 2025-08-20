@@ -3,6 +3,9 @@ import cv2
 import time
 import json
 import easyocr
+import re
+import socket
+import threading
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QImage, QPixmap, QColor, QIcon
 from PySide6.QtWidgets import (
@@ -54,12 +57,18 @@ class VideoOCRApp(QWidget):
         super().__init__()
 
         # Relay for DI control
-        self.relay = Relay(host="192.168.1.200")  # Replace with your relay's IP address
+        self.relay = Relay(host="192.168.1.254")  # Replace with your relay's IP address
+        self.relay.connect()  # Ensure connection is established once
 
         # Worker for monitoring relay inputs
         self.relay_worker = RelayWorker(self.relay)
         self.relay_worker.start_signal.connect(self.perform_ocr)  # Connect start signal
         self.relay_worker.finish_signal.connect(self.resume_video_feed)  # Connect finish signal
+
+        # Start relay monitoring in a separate thread
+        self.relay_thread = threading.Thread(target=self.relay_worker.monitor_relay_inputs, daemon=True)
+        self.relay_thread.start()
+        print("Started relay monitoring thread.")
 
         # Initialize EasyOCR Reader
         self.reader = easyocr.Reader(['en'])
@@ -119,14 +128,22 @@ class VideoOCRApp(QWidget):
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setFixedSize(self.camera_width, self.camera_height)  # Match camera resolution dynamically
 
+        # Logo under video_label, using thumbnail size
+        logo_layout = QVBoxLayout()
+        logo_layout.addWidget(self.video_label)
+        self.logo_label = QLabel(tab)
+        self.logo_label.setPixmap(QPixmap("AGC_logo.png").scaled(150, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.logo_label.setAlignment(Qt.AlignLeft | Qt.AlignBottom)
+        logo_layout.addWidget(self.logo_label)
+
         # Right: Controls and table
         right_layout = QVBoxLayout()
 
         # Model Data: File selector
-        self.model_data_label = QLabel("Model Data:")
+        self.model_data_label = QLabel("Model Name:")
         self.model_data_file = QLineEdit()
         self.model_data_file.setReadOnly(True)
-        self.browse_button = QPushButton("Browse")
+        self.browse_button = QPushButton("Job Change")
         self.browse_button.clicked.connect(self.browse_json_file)
 
         model_data_layout = QHBoxLayout()
@@ -169,7 +186,7 @@ class VideoOCRApp(QWidget):
         right_layout.addLayout(button_layout)
 
         # Add to the main layout
-        layout.addWidget(self.video_label, 1)
+        layout.addLayout(logo_layout, 1)
         layout.addLayout(right_layout, 1)
 
         tab.setLayout(layout)
@@ -223,12 +240,19 @@ class VideoOCRApp(QWidget):
         return tab
 
     def browse_json_file(self):
-        """Browse and load a JSON file."""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select JSON File", "", "JSON Files (*.json)")
-        if file_path:
-            self.current_json_file = file_path
-            self.model_data_file.setText(file_path)
-            self.load_json_to_table(file_path)
+        """Browse and load a JSON file using barcode scanner input."""
+        scan_barcode, ok = QInputDialog.getText(self, "Scan Barcode", "Please scan the barcode or enter the model name:")
+        if not ok or not scan_barcode:
+            return
+        # Decode Free 3 of 9 Extended font to normal ASCII
+        decoded_barcode = self.decode_free_3_of_9_extended(scan_barcode)
+        # Remove everything after and including '$'
+        sanitized_barcode = decoded_barcode.split("$")[0]
+        file_path = f"{sanitized_barcode}.json"
+        print(f"Sanitized barcode: {sanitized_barcode}, loading file: {file_path}")
+        self.current_json_file = file_path
+        self.model_data_file.setText(file_path)
+        self.load_json_to_table(file_path)
 
     def load_json_to_table(self, file_path):
         """Load JSON data into the table."""
@@ -248,30 +272,62 @@ class VideoOCRApp(QWidget):
     def populate_table(self, data, table, detected_texts=None):
         """Populate the QTableWidget with data and optionally show match status."""
         table.setRowCount(0)
+        found_match_or_partial = False
+        found_not_found = False
         for item in data:
             row_position = table.rowCount()
             table.insertRow(row_position)
             table.setItem(row_position, 0, QTableWidgetItem(item))
-            # If detected_texts provided, compare and set result
             result = ""
             if detected_texts is not None:
                 item_upper = item.upper()
                 if item_upper in detected_texts:
                     result = "Match"
-                elif any(item_upper in dt or dt in item_upper for dt in detected_texts):
-                    result = "Partial Match"
                 else:
-                    result = "Not Found"
+                    partial_found = False
+                    for dt in detected_texts:
+                        item_digits = re.findall(r'\d{2,}', item_upper)
+                        dt_digits = re.findall(r'\d{2,}', dt)
+                        if any(d in dt for d in item_digits) or any(d in item_upper for d in dt_digits):
+                            partial_found = True
+                            break
+                        for i in range(len(item_upper)-1):
+                            sub = item_upper[i:i+2]
+                            if sub in dt:
+                                partial_found = True
+                                break
+                        for i in range(len(dt)-1):
+                            sub = dt[i:i+2]
+                            if sub in item_upper:
+                                partial_found = True
+                                break
+                        if partial_found:
+                            break
+                    if partial_found:
+                        result = "Partial Match"
+                    else:
+                        result = "Not Found"
                 result_item = QTableWidgetItem(result)
-                
-                # Set background color based on result
                 if result == "Match":
                     result_item.setBackground(QColor(0, 255, 0))  # Green
+                    found_match_or_partial = True
                 elif result == "Partial Match":
                     result_item.setBackground(QColor(255, 255, 0))  # Yellow
+                    found_match_or_partial = True
                 else:
                     result_item.setBackground(QColor(255, 0, 0))  # Red
+                    found_not_found = True
                 table.setItem(row_position, 1, result_item)
+        # Relay logic after all rows processed
+        if detected_texts is not None:
+            if found_not_found:
+                print("on relay 5")
+                Relay.on(self.relay, 5)
+            elif found_match_or_partial:
+                print("on relay 4")
+                Relay.on(self.relay, 4)
+                # Wait 2 seconds then turn off relay 4
+                threading.Timer(2.0, lambda: Relay.off(self.relay, 4)).start()
         table.setEditTriggers(QTableWidget.NoEditTriggers)  # Disable editing by default
 
     def enable_table_editing(self):
@@ -293,6 +349,30 @@ class VideoOCRApp(QWidget):
         self.setting_save_button.setEnabled(True)
         self.setting_cancel_button.setEnabled(True)
 
+    def cancel_setting_editing(self):
+        """Cancel editing and revert to the original data in the setting table."""
+        self.populate_table(self.original_data, self.setting_table)
+        self.setting_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.setting_save_button.setEnabled(False)
+        self.setting_cancel_button.setEnabled(False)
+
+    def decode_free_3_of_9_extended(self, text):
+        """
+        Decode Free 3 of 9 Extended barcode font to normal ASCII text.
+        Handles /A-Z for control chars, /H for (, /I for ), /D for $, %Q for prefix, etc.
+        """
+        # Replace special sequences
+        decoded = text
+        decoded = decoded.replace("/H", "(").replace("/I", ")").replace("/D", "$")
+        # Replace /A-Z with corresponding ASCII control chars
+        import string
+        for c in string.ascii_uppercase:
+            decoded = decoded.replace(f"/{c}", chr(ord(c) - 64))  # /A -> SOH (chr(1)), /B -> STX (chr(2)), etc.
+        # Remove %Q prefix if present
+        if decoded.startswith("%Q"):
+            decoded = decoded[2:]
+        return decoded
+
     def save_setting_data(self):
         """Save the edited setting data to a new JSON file."""
         data = []
@@ -304,7 +384,10 @@ class VideoOCRApp(QWidget):
         # Open a dialog to get the model name
         model_name, ok = QInputDialog.getText(self, "Save Model", "Enter model name:")
         if ok and model_name:
-            file_path = f"{model_name}.json"
+            # Decode Free 3 of 9 Extended font to normal ASCII
+            decoded_model_name = self.decode_free_3_of_9_extended(model_name)
+            sanitized_model_name = decoded_model_name.split("$")[0]
+            file_path = f"{sanitized_model_name}.json"
             try:
                 with open(file_path, "w") as file:
                     json.dump(data, file, indent=4)
@@ -316,13 +399,6 @@ class VideoOCRApp(QWidget):
             self.setting_table.setEditTriggers(QTableWidget.NoEditTriggers)
             self.setting_save_button.setEnabled(False)
             self.setting_cancel_button.setEnabled(False)
-
-    def cancel_setting_editing(self):
-        """Cancel editing and revert to the original data in the setting table."""
-        self.populate_table(self.original_data, self.setting_table)
-        self.setting_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.setting_save_button.setEnabled(False)
-        self.setting_cancel_button.setEnabled(False)
 
     def add_model_data(self):
         """Add a new row to the setting table."""
@@ -437,8 +513,6 @@ class VideoOCRApp(QWidget):
             self.cancel_button.setEnabled(False)
         except Exception as e:
             print(f"Error saving JSON file: {e}")
-
-
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
