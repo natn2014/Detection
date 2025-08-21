@@ -1,3 +1,4 @@
+#!/bin/python
 import sys
 import cv2
 import time
@@ -10,7 +11,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QImage, QPixmap, QColor, QIcon
 from PySide6.QtWidgets import (
     QApplication, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QTableWidget, QTableWidgetItem, QFileDialog, QLineEdit, QInputDialog
+    QLabel, QPushButton, QTableWidget, QTableWidgetItem, QFileDialog, QLineEdit, QInputDialog, QSizePolicy
 )
 from relay_b import Relay
 from PySide6.QtCore import QObject, Signal
@@ -70,6 +71,8 @@ class VideoOCRApp(QWidget):
         self.relay_thread.start()
         print("Started relay monitoring thread.")
 
+
+
         # Initialize EasyOCR Reader
         self.reader = easyocr.Reader(['en'])
 
@@ -81,7 +84,8 @@ class VideoOCRApp(QWidget):
 
         # Set up the main layout with tabs
         self.setWindowTitle("Real-Time OCR with PySide6")
-        self.setGeometry(100, 100, 1200, 800)
+        #self.setGeometry(100, 100, 1200, 800)
+        self.setWindowState(Qt.WindowMaximized)  # Start maximized
 
         self.tab_widget = QTabWidget(self)
         self.monitor_tab = self.create_monitor_tab()
@@ -126,7 +130,10 @@ class VideoOCRApp(QWidget):
         # Left: Video feed display
         self.video_label = QLabel(tab)
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setFixedSize(self.camera_width, self.camera_height)  # Match camera resolution dynamically
+        #self.video_label.setFixedSize(self.camera_width, self.camera_height)  # Match camera resolution dynamically
+        self.video_label.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding           
+            )
 
         # Logo under video_label, using thumbnail size
         logo_layout = QVBoxLayout()
@@ -514,6 +521,12 @@ class VideoOCRApp(QWidget):
         except Exception as e:
             print(f"Error saving JSON file: {e}")
         
+    #When try to enter text call function self.browse_json_file
+    def keyPressEvent(self, event):
+        """Handle key press events to trigger JSON file browsing."""
+        if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            self.browse_json_file()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = VideoOCRApp()
