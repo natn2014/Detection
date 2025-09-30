@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'ShowerTest_UIeFeMmU.ui'
+## Form generated from reading UI file 'ShowerTest_UIVDOsrU.ui'
 ##
 ## Created by: Qt User Interface Compiler version 6.8.0
 ##
@@ -13,7 +13,7 @@ from PySide6.QtCore import (QCoreApplication, QDate, QDateTime, QLocale,
     QSize, QTime, QUrl, Qt)
 from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
-    QImage, QKeySequence, QLinearGradient, QPainter,QIcon,
+    QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QAbstractButton, QApplication, QDialogButtonBox, QFrame,
     QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
@@ -26,11 +26,6 @@ class Ui_MainWindow(object):
         if not MainWindow.objectName():
             MainWindow.setObjectName(u"MainWindow")
         MainWindow.resize(796, 592)
-        # Add icon to the application window
-        icon = QIcon()
-        icon.addFile(u"AGC_Logo.png", QSize(), QIcon.Normal, QIcon.Off)
-        MainWindow.setWindowIcon(icon)
-        # Add icon to the application window
         self.centralwidget = QWidget(MainWindow)
         self.centralwidget.setObjectName(u"centralwidget")
         self.horizontalLayout_4 = QHBoxLayout(self.centralwidget)
@@ -66,6 +61,7 @@ class Ui_MainWindow(object):
         self.label_CAM1_VideoLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.verticalLayout_2.addWidget(self.label_CAM1_VideoLabel)
+
 
         self.verticalLayout_3.addLayout(self.verticalLayout_2)
 
@@ -160,9 +156,21 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout.addWidget(self.label_Logo)
 
+        self.line_3 = QFrame(self.tab)
+        self.line_3.setObjectName(u"line_3")
+        self.line_3.setFrameShape(QFrame.Shape.VLine)
+        self.line_3.setFrameShadow(QFrame.Shadow.Sunken)
+
+        self.horizontalLayout.addWidget(self.line_3)
+
+        self.pushButton_RecordVideo = QPushButton(self.tab)
+        self.pushButton_RecordVideo.setObjectName(u"pushButton_RecordVideo")
+
+        self.horizontalLayout.addWidget(self.pushButton_RecordVideo)
+
         self.buttonBox_Ok_Retry_Cancel = QDialogButtonBox(self.tab)
         self.buttonBox_Ok_Retry_Cancel.setObjectName(u"buttonBox_Ok_Retry_Cancel")
-        self.buttonBox_Ok_Retry_Cancel.setStandardButtons(QDialogButtonBox.StandardButton.Cancel|QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Retry)
+        self.buttonBox_Ok_Retry_Cancel.setStandardButtons(QDialogButtonBox.StandardButton.Cancel|QDialogButtonBox.StandardButton.Ok)
 
         self.horizontalLayout.addWidget(self.buttonBox_Ok_Retry_Cancel)
 
@@ -309,7 +317,7 @@ class Ui_MainWindow(object):
     # setupUi
 
     def retranslateUi(self, MainWindow):
-        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"Leakage Inspection x 4 camera", None))
+        MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"Leakage Inspection x 4 Camera", None))
         self.pushButton_CAM1.setText(QCoreApplication.translate("MainWindow", u"CAM1 Status", None))
         self.pushButton_CAM3.setText(QCoreApplication.translate("MainWindow", u"CAM3 Status", None))
         self.groupBox_CAM1.setTitle(QCoreApplication.translate("MainWindow", u"CAM1", None))
@@ -323,6 +331,7 @@ class Ui_MainWindow(object):
         self.label_CAM2_VideoLabel.setText(QCoreApplication.translate("MainWindow", u"CAM2 Video Label", None))
         self.pushButton_CAM4.setText(QCoreApplication.translate("MainWindow", u"CAM4 Status", None))
         self.label_Logo.setText(QCoreApplication.translate("MainWindow", u"[Leakage Inspection] AGC Automotive Thailand", None))
+        self.pushButton_RecordVideo.setText(QCoreApplication.translate("MainWindow", u"Record Video", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), QCoreApplication.translate("MainWindow", u"Monitor", None))
         self.groupBox_Camera.setTitle(QCoreApplication.translate("MainWindow", u"Camera", None))
         ___qtablewidgetitem = self.tableWidget_TableCamera.horizontalHeaderItem(0)
