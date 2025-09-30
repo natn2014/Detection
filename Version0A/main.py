@@ -29,25 +29,51 @@ class MultiCameraApp(QMainWindow):
         self.setup_connections()
         self.auto_connect_cameras()
 
+        self.is_recording = False
+        self.blink_timer = QTimer()
+        self.blink_timer.timeout.connect(self.blink_record_button)
+        self.blink_state = False
+
     def setup_connections(self):
         # Connect buttons to camera control functions
         self.ui.pushButton_CAM1.clicked.connect(lambda: self.toggle_camera("CAM1"))
         self.ui.pushButton_CAM2.clicked.connect(lambda: self.toggle_camera("CAM2"))
         self.ui.pushButton_CAM3.clicked.connect(lambda: self.toggle_camera("CAM3"))
         self.ui.pushButton_CAM4.clicked.connect(lambda: self.toggle_camera("CAM4"))
-        # Modify button box connections
-        self.ui.buttonBox_Ok_Retry_Cancel.clicked.connect(self.handle_record_buttons)
+        # Replace buttonBox connection with pushButton_RecordVideo
+        self.ui.pushButton_RecordVideo.clicked.connect(self.toggle_recording)
 
-    def handle_record_buttons(self, button):
-        button_role = self.ui.buttonBox_Ok_Retry_Cancel.buttonRole(button)
-        if button_role == QDialogButtonBox.AcceptRole:  # OK button
+    def toggle_recording(self):
+        """Toggle recording state for all active cameras"""
+        if not self.is_recording:
+            # Start recording
+            self.is_recording = True
+            self.ui.pushButton_RecordVideo.setText("Stop Recording")
+            # Start blinking effect
+            self.blink_timer.start(500)  # Blink every 500ms
+            # Start recording for all active cameras
             for camera_id in self.cameras.keys():
                 if camera_id in self.camera_streams:
                     self.start_recording(camera_id)
-        elif button_role == QDialogButtonBox.RejectRole:  # Cancel button
+        else:
+            # Stop recording
+            self.is_recording = False
+            self.ui.pushButton_RecordVideo.setText("Record Video")
+            # Stop blinking effect
+            self.blink_timer.stop()
+            self.ui.pushButton_RecordVideo.setStyleSheet("")
+            # Stop recording for all active cameras
             for camera_id in self.cameras.keys():
                 if camera_id in self.recording_state:
                     self.stop_recording(camera_id)
+
+    def blink_record_button(self):
+        """Toggle button background color for blinking effect"""
+        if self.blink_state:
+            self.ui.pushButton_RecordVideo.setStyleSheet("background-color: red;")
+        else:
+            self.ui.pushButton_RecordVideo.setStyleSheet("background-color: none;")
+        self.blink_state = not self.blink_state
 
     def auto_connect_cameras(self):
         for camera_id in self.cameras.keys():
