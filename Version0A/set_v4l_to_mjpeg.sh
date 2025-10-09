@@ -6,7 +6,7 @@
 # Desired resolution and frame rate (modify as needed)
 RES_WIDTH=640
 RES_HEIGHT=480
-FPS=15
+FPS=30
 FORMAT="MJPG"
 
 # List all video devices
