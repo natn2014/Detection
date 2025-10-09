@@ -5,6 +5,7 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import QTimer
 from ShowerTest_UI import Ui_MainWindow  # Import the generated UI class
 from yolo_detection import YoloDetection
+from relay_manager import Relay
 import time
 import threading
 from datetime import datetime
@@ -19,11 +20,12 @@ class MultiCameraApp(QMainWindow):
         # Camera connections
         self.cameras = {
             "CAM1": {"index": 0, "label": self.ui.label_CAM1_VideoLabel},
-            "CAM2": {"index": 1, "label": self.ui.label_CAM2_VideoLabel},
-            "CAM3": {"index": 2, "label": self.ui.label_CAM3_VideoLabel},
-            "CAM4": {"index": 3, "label": self.ui.label_CAM4_VideoLabel},
+            "CAM2": {"index": 2, "label": self.ui.label_CAM2_VideoLabel},
+            "CAM3": {"index": 4, "label": self.ui.label_CAM3_VideoLabel},
+            "CAM4": {"index": 6, "label": self.ui.label_CAM4_VideoLabel},
         }
-
+        ## Need to separete 2 camera for USB bandwidth issue ##
+        ## 0,2 For USB 2.0 and 4,6 for USB 3.0 Hub##
         self.recording_state = {}
         self.camera_streams = {}
         self.setup_connections()
@@ -90,17 +92,32 @@ class MultiCameraApp(QMainWindow):
         camera_index = self.cameras[camera_id]["index"]
         label = self.cameras[camera_id]["label"]
         label.setText("Connecting...")
+        
         # Open camera stream
         cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():
             print(f"Failed to open {camera_id}")
+            label.setText("Failed to connect")
             return
+
+        # Configure camera for MJPG format and lower resolution
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320) #Original 640
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)#Original 480
+        cap.set(cv2.CAP_PROP_FPS, 30)
+
+        # Verify settings were applied
+        fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+        codec = "".join([chr((fourcc >> 8 * i) & 0xFF) for i in range(4)])
+        print(f"{camera_id} codec: {codec}")
+        print(f"{camera_id} FPS: {cap.get(cv2.CAP_PROP_FPS)}")
+        print(f"{camera_id} Resolution: {cap.get(cv2.CAP_PROP_FRAME_WIDTH)}x{cap.get(cv2.CAP_PROP_FRAME_HEIGHT)}")
 
         self.camera_streams[camera_id] = cap
 
         # Initialize YOLO detection for this camera
         try:
-            yolo_detector = YoloDetection("yolov8n.pt", cvalue=0.6)  # You can adjust confidence value here
+            yolo_detector = YoloDetection("yolov8n.pt", cvalue=0.6)
             self.cameras[camera_id]["yolo"] = yolo_detector
         except Exception as e:
             print(f"Failed to initialize YOLO for {camera_id}: {e}")
@@ -170,12 +187,15 @@ class MultiCameraApp(QMainWindow):
         except Exception as e:
             print(f"Error in YOLO detection for {camera_id}: {e}")
 
+    ## When detected classes name "Person" then trigger relay ##
+
+
     # Save Video stream function when clicked
     def start_recording(self, camera_id):
         if camera_id not in self.camera_streams:
             print(f"{camera_id} is not active.")
             return
-        
+            
         if camera_id in self.recording_state:
             print(f"{camera_id} is already recording.")
             return
@@ -267,3 +287,4 @@ if __name__ == "__main__":
     window = MultiCameraApp()
     window.show()
     sys.exit(app.exec())
+
