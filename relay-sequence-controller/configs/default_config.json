@@ -1,0 +1,19 @@
+{
+    "sequences": [
+        {
+            "initial_states": {
+                "1": true
+            },
+            "end_states": {
+                "7": true
+            },
+            "type": "multi",
+            "steps": "DO1(ON)&DI1->DO2(ON)&DO1(OFF)\nDO2(ON)&DI2->DO3(ON)&DO2(OFF)\nDO3(ON)&DI3->DO4(ON)&DO3(OFF)",
+            "return_to_initial": true
+        }
+    ],
+    "enabled_states": [
+        true
+    ],
+    "saved_at": "2025-10-22T16:47:29.335096"
+}

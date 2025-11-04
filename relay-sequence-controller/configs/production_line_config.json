@@ -1,0 +1,52 @@
+{
+  "sequences": [
+    {
+      "type": "station",
+      "operation_type": "Part Detection & Process",
+      "part_sensor": 1,
+      "process_device": 1,
+      "feedback_sensor": 2,
+      "skip_sensor": 3,
+      "timeout": 15,
+      "duration": 5,
+      "blink_mode": false,
+      "initial_states": {},
+      "end_states": {}
+    },
+    {
+      "type": "station", 
+      "operation_type": "Sequential Operation",
+      "part_sensor": 2,
+      "process_device": 2,
+      "feedback_sensor": 4,
+      "skip_sensor": 5,
+      "timeout": 20,
+      "duration": 0,
+      "blink_mode": true,
+      "initial_states": {},
+      "end_states": {}
+    },
+    {
+      "type": "production_line",
+      "steps": "PART_DI1->CLAMP_DO1:2s\nCLAMP_FEEDBACK_DI2->DRILL_DO2:5s\nDRILL_FEEDBACK_DI3->UNCLAMP_DO1(OFF)\nUNCLAMP_FEEDBACK_DI4->TRANSFER_DO3:3s\nTRANSFER_COMPLETE_DI5->STATION_READY_DO4(OFF)",
+      "return_to_initial": false,
+      "initial_states": {},
+      "end_states": {}
+    },
+    {
+      "type": "station",
+      "operation_type": "Safety Interlock", 
+      "part_sensor": 8,
+      "process_device": 8,
+      "feedback_sensor": 7,
+      "skip_sensor": 6,
+      "timeout": 5,
+      "duration": 0,
+      "blink_mode": true,
+      "initial_states": {},
+      "end_states": {}
+    }
+  ],
+  "enabled_states": [true, true, true, true],
+  "saved_at": "2025-10-27T12:00:00.000000"
+}

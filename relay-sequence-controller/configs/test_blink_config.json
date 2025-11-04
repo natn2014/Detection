@@ -1,0 +1,35 @@
+{
+  "sequences": [
+    {
+      "type": "simple",
+      "logic": "Single DI",
+      "di1": 1,
+      "di2": null,
+      "do": 1,
+      "duration": 10,
+      "blink_mode": true,
+      "initial_states": {},
+      "end_states": {}
+    },
+    {
+      "type": "multi",
+      "steps": "DI2->DO2(ON):3s\nWAIT:2s\nDI3->DO3(BLINK):8s\nWAIT:1s\nDI4->DO3(OFF)",
+      "return_to_initial": false,
+      "initial_states": {},
+      "end_states": {}
+    },
+    {
+      "type": "simple", 
+      "logic": "AND Gate",
+      "di1": 2,
+      "di2": 3,
+      "do": 4,
+      "duration": 0,
+      "blink_mode": true,
+      "initial_states": {},
+      "end_states": {}
+    }
+  ],
+  "enabled_states": [true, true, true],
+  "saved_at": "2025-10-27T10:00:00.000000"
+}
