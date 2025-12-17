@@ -44,6 +44,7 @@ RELAY_CONFIGS = [
 UPDATE_INTERVAL = int(os.getenv('UPDATE_INTERVAL', '500'))  # milliseconds
 JOBS_FILE = 'job_sequences.json'
 ALARM_CONFIG_FILE = 'alarm_config.json'
+VACUUM_CONFIG_FILE = 'vacuum_config.json'
 
 # Number of IO points per relay
 NUM_INPUTS = 8
@@ -75,6 +76,29 @@ class AlarmConfig:
             relay_id=data.get('relay_id', ''),
             do_channel=data.get('do_channel', 0),
             enabled=data.get('enabled', True)
+        )
+
+
+class VacuumConfig:
+    """Vacuum configuration"""
+    def __init__(self, relay_id: str = "", di_channel: int = 0, do_channel: int = 0):
+        self.relay_id = relay_id
+        self.di_channel = di_channel  # DI to detect (0 = disabled)
+        self.do_channel = do_channel  # DO to send signal to
+
+    def to_dict(self):
+        return {
+            'relay_id': self.relay_id,
+            'di_channel': self.di_channel,
+            'do_channel': self.do_channel
+        }
+
+    @staticmethod
+    def from_dict(data):
+        return VacuumConfig(
+            relay_id=data.get('relay_id', ''),
+            di_channel=data.get('di_channel', 0),
+            do_channel=data.get('do_channel', 0)
         )
 
 
@@ -134,7 +158,7 @@ class StepSequenceExecutor:
 
     def __init__(self, relay_id: str, relay_client: RelayClient,
                  relay_states: Dict, signals: SequenceSignals, 
-                 step_configs: List[int], alarm_config: AlarmConfig):
+                 step_configs: List[int], alarm_config: AlarmConfig, vacuum_config=None):
         """
         relay_id: IP address of relay
         relay_client: RelayClient instance
@@ -142,6 +166,7 @@ class StepSequenceExecutor:
         signals: SequenceSignals for updates
         step_configs: List of BOX numbers (1-8) for each step (index 0 = step 1)
         alarm_config: AlarmConfig for unexpected DI detection
+        vacuum_config: VacuumConfig to exclude vacuum DI from alarms
         """
         self.relay_id = relay_id
         self.relay_client = relay_client
@@ -149,6 +174,7 @@ class StepSequenceExecutor:
         self.signals = signals
         self.step_configs = step_configs
         self.alarm_config = alarm_config
+        self.vacuum_config = vacuum_config
         self.current_step = 0
         self.running = False
         self.lock = Lock()
@@ -172,8 +198,17 @@ class StepSequenceExecutor:
         """Check for unexpected DI signals"""
         expected_di_channel = self.step_configs[self.current_step - 1] if self.current_step > 0 else 0
         
+        # Get vacuum DI channel if configured
+        vacuum_di_channel = 0
+        if self.vacuum_config and self.vacuum_config.di_channel > 0:
+            vacuum_di_channel = self.vacuum_config.di_channel
+        
         for channel_num in range(1, NUM_INPUTS + 1):
             if di_states[channel_num - 1]:  # DI is ON
+                # Skip alarm check if this is vacuum DI channel
+                if channel_num == vacuum_di_channel:
+                    continue
+                
                 # Check if this is unexpected
                 if self.running and channel_num != expected_di_channel:
                     # Unexpected DI detected
@@ -434,6 +469,41 @@ class AlarmManager:
         return AlarmConfig(relay_id=relay_id)
 
 
+class VacuumManager:
+    """Manage vacuum configurations"""
+    
+    @staticmethod
+    def save_vacuum_config(relay_id: str, config: VacuumConfig):
+        """Save vacuum config"""
+        try:
+            configs = {}
+            if os.path.exists(VACUUM_CONFIG_FILE):
+                with open(VACUUM_CONFIG_FILE, 'r') as f:
+                    configs = json.load(f)
+            
+            configs[relay_id] = config.to_dict()
+            
+            with open(VACUUM_CONFIG_FILE, 'w') as f:
+                json.dump(configs, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error saving vacuum config: {e}")
+            return False
+
+    @staticmethod
+    def load_vacuum_config(relay_id: str) -> VacuumConfig:
+        """Load vacuum config"""
+        try:
+            if os.path.exists(VACUUM_CONFIG_FILE):
+                with open(VACUUM_CONFIG_FILE, 'r') as f:
+                    configs = json.load(f)
+                    if relay_id in configs:
+                        return VacuumConfig.from_dict(configs[relay_id])
+        except Exception as e:
+            print(f"Error loading vacuum config: {e}")
+        return VacuumConfig(relay_id=relay_id)
+
+
 # ============================================================================
 # Alarm Password Dialog
 # ============================================================================
@@ -622,6 +692,14 @@ class PokayokeTableWindow(QMainWindow):
             }
             self.active_alarms[relay_id] = False  # Initialize alarm state
             self.alarm_configs[relay_id] = AlarmManager.load_alarm_config(relay_id)
+
+        # Initialize vacuum configs
+        self.vacuum_configs = {}
+        self.vacuum_di_previous_state = {}  # Track previous DI state for edge detection
+        for config in RELAY_CONFIGS:
+            relay_id = config['ip']
+            self.vacuum_configs[relay_id] = VacuumManager.load_vacuum_config(relay_id)
+            self.vacuum_di_previous_state[relay_id] = False  # Track DI state change
 
         self.current_job = None
         self.init_ui()
@@ -944,7 +1022,8 @@ class PokayokeTableWindow(QMainWindow):
                 self.relay_states[relay_id],
                 self.sequence_signals,
                 step_configs,
-                self.alarm_configs[relay_id]
+                self.alarm_configs[relay_id],
+                self.vacuum_configs[relay_id] if relay_id in self.vacuum_configs else None
             )
             self.sequence_executors[relay_id] = executor
 
@@ -962,7 +1041,15 @@ class PokayokeTableWindow(QMainWindow):
                 table_widget.setVerticalHeaderItem(row, step_label)
 
                 combo = QComboBox()
-                combo.addItems(["0", "1", "2", "3", "4", "5", "6", "7", "8"])
+                
+                # Build available BOX options, excluding vacuum DO channel
+                available_boxes = ["0"]  # Always include 0 (skip)
+                vacuum_do = self.vacuum_configs[relay_id].do_channel
+                for box_num in range(1, 9):
+                    if box_num != vacuum_do:  # Exclude vacuum DO channel
+                        available_boxes.append(str(box_num))
+                
+                combo.addItems(available_boxes)
                 combo.setCurrentText("0")
                 combo.currentTextChanged.connect(
                     partial(self.on_box_selection_changed, relay_id, step_num)
@@ -1069,7 +1156,7 @@ class PokayokeTableWindow(QMainWindow):
         self.job_change_widget.setLayout(layout)
 
     def setup_machine_data_tab(self):
-        """Setup Machine Data tab for alarm settings"""
+        """Setup Machine Data tab for alarm and vacuum settings"""
         self.machine_data_widget = QWidget()
         layout = QVBoxLayout()
 
@@ -1115,6 +1202,54 @@ class PokayokeTableWindow(QMainWindow):
         alarm_group.setLayout(alarm_layout)
         layout.addWidget(alarm_group)
 
+        # Vacuum configuration section
+        vacuum_group = QGroupBox("Vacuum Configuration - Auto Control")
+        vacuum_layout = QVBoxLayout()
+        vacuum_layout.addWidget(QLabel("When DI is detected, automatically send signal to DO"))
+
+        self.vacuum_widgets = {}
+
+        for config in RELAY_CONFIGS:
+            relay_id = config['ip']
+            relay_name = config['name']
+
+            # Sub-group for each relay
+            relay_group_layout = QHBoxLayout()
+            relay_group_layout.addWidget(QLabel(f"{relay_name}:"))
+
+            # Vacuum DI channel dropdown (detect input)
+            di_combo = QComboBox()
+            di_combo.addItems(["0 (Disabled)", "DI1", "DI2", "DI3", "DI4", "DI5", "DI6", "DI7", "DI8"])
+            current_di = self.vacuum_configs[relay_id].di_channel
+            di_combo.setCurrentIndex(current_di)
+            di_combo.currentIndexChanged.connect(
+                partial(self.on_vacuum_di_changed, relay_id)
+            )
+            relay_group_layout.addWidget(QLabel("Detect DI:"))
+            relay_group_layout.addWidget(di_combo)
+
+            # Vacuum DO channel dropdown (send signal)
+            do_combo = QComboBox()
+            do_combo.addItems(["0 (None)", "DO1", "DO2", "DO3", "DO4", "DO5", "DO6", "DO7", "DO8"])
+            current_do = self.vacuum_configs[relay_id].do_channel
+            do_combo.setCurrentIndex(current_do)
+            do_combo.currentIndexChanged.connect(
+                partial(self.on_vacuum_do_changed, relay_id)
+            )
+            relay_group_layout.addWidget(QLabel("Send to DO:"))
+            relay_group_layout.addWidget(do_combo)
+
+            relay_group_layout.addStretch()
+            vacuum_layout.addLayout(relay_group_layout)
+
+            self.vacuum_widgets[relay_id] = {
+                'di_combo': di_combo,
+                'do_combo': do_combo
+            }
+
+        vacuum_group.setLayout(vacuum_layout)
+        layout.addWidget(vacuum_group)
+
         layout.addStretch()
         self.machine_data_widget.setLayout(layout)
 
@@ -1137,6 +1272,22 @@ class PokayokeTableWindow(QMainWindow):
             if relay_id in self.sequence_executors:
                 self.sequence_executors[relay_id].alarm_config = self.alarm_configs[relay_id]
             print(f"[{relay_id}] Alarm DO set to: {do_channel}")
+
+    def on_vacuum_do_changed(self, relay_id: str, index):
+        """Handle vacuum DO channel change"""
+        if relay_id in self.vacuum_widgets:
+            do_channel = self.vacuum_widgets[relay_id]['do_combo'].currentIndex()
+            self.vacuum_configs[relay_id].do_channel = do_channel
+            VacuumManager.save_vacuum_config(relay_id, self.vacuum_configs[relay_id])
+            print(f"[{relay_id}] Vacuum DO set to: DO{do_channel}")
+
+    def on_vacuum_di_changed(self, relay_id: str, index):
+        """Handle vacuum DI channel change"""
+        if relay_id in self.vacuum_widgets:
+            di_channel = self.vacuum_widgets[relay_id]['di_combo'].currentIndex()
+            self.vacuum_configs[relay_id].di_channel = di_channel
+            VacuumManager.save_vacuum_config(relay_id, self.vacuum_configs[relay_id])
+            print(f"[{relay_id}] Vacuum DI set to: DI{di_channel}")
 
     def refresh_job_list(self):
         """Refresh job combo box"""
@@ -1335,6 +1486,10 @@ class PokayokeTableWindow(QMainWindow):
                     states,
                     self.relay_states[relay_id]['do']
                 )
+            
+            # Handle vacuum auto-control
+            self.on_vacuum_di_detected(relay_id, states)
+            
             # Update manual tab
             self.on_manual_di_updated(relay_id, states)
 
@@ -1401,6 +1556,16 @@ class PokayokeTableWindow(QMainWindow):
                     self.total_cycle_time[relay_id] = self.total_cycle_time.get(relay_id, 0) + cycle_time
                 else:
                     cycle_time = 0
+                
+                # Turn OFF vacuum DO when cycle completes
+                if relay_id in self.vacuum_configs:
+                    vacuum_config = self.vacuum_configs[relay_id]
+                    if vacuum_config.do_channel > 0:
+                        try:
+                            self.relay_clients[relay_id].write_digital_output(vacuum_config.do_channel, False)
+                            print(f"[{relay_id}] Cycle completed - Vacuum DO{vacuum_config.do_channel} turned OFF")
+                        except Exception as e:
+                            print(f"[{relay_id}] Error turning off vacuum DO: {e}")
                 
                 # Increment cycle counter
                 self.cycle_count[relay_id] = self.cycle_count.get(relay_id, 0) + 1
@@ -1473,6 +1638,68 @@ class PokayokeTableWindow(QMainWindow):
         alarm_tab_index = self.tab_widget.indexOf(self.alarm_widget)
         if alarm_tab_index >= 0:
             self.tab_widget.setCurrentIndex(alarm_tab_index)
+
+    def on_vacuum_di_detected(self, relay_id: str, di_states: List[bool]):
+        """Handle vacuum DI detection and auto-control"""
+        if relay_id not in self.vacuum_configs:
+            return
+        
+        vacuum_config = self.vacuum_configs[relay_id]
+        
+        # Check if vacuum is configured (both DI and DO are non-zero)
+        if vacuum_config.di_channel == 0 or vacuum_config.do_channel == 0:
+            return
+        
+        # Get current DI state (convert channel number to 0-based index)
+        di_index = vacuum_config.di_channel - 1
+        if di_index < 0 or di_index >= len(di_states):
+            return
+        
+        current_di_state = di_states[di_index]
+        previous_di_state = self.vacuum_di_previous_state.get(relay_id, False)
+        
+        # Detect rising edge: DI goes from OFF to ON
+        if current_di_state and not previous_di_state:
+            # Vacuum DI detected - send signal to vacuum DO
+            do_channel = vacuum_config.do_channel
+            try:
+                success = self.relay_clients[relay_id].write_digital_output(do_channel, True)
+                if success:
+                    print(f"[{relay_id}] Vacuum auto-control: DI{vacuum_config.di_channel} detected → DO{do_channel} activated")
+                    
+                    # Auto-start sequence when vacuum DO is triggered
+                    if relay_id in self.sequence_executors:
+                        executor = self.sequence_executors[relay_id]
+                        if not executor.running:
+                            print(f"[{relay_id}] Auto-starting sequence from vacuum trigger")
+                            self.on_start_sequence(relay_id)
+                            
+                            # Verify step 1 starts within 2 seconds
+                            def verify_step1_started():
+                                import time
+                                time.sleep(2)
+                                if relay_id in self.sequence_executors:
+                                    executor = self.sequence_executors[relay_id]
+                                    # Check if step 1 has started (should be in SIGNAL or later)
+                                    if executor.current_step < 1:
+                                        print(f"[{relay_id}] ⚠️ WARNING: Vacuum triggered but Step 1 did not start!")
+                                        # Switch to job change tab to see the issue
+                                        if hasattr(self, 'tab_widget'):
+                                            tab_index = self.tab_widget.indexOf(self.job_change_widget)
+                                            if tab_index >= 0:
+                                                self.tab_widget.setCurrentIndex(tab_index)
+                                    else:
+                                        print(f"[{relay_id}] ✓ Step 1 started successfully (Step {executor.current_step})")
+                            
+                            verification_thread = Thread(target=verify_step1_started, daemon=True)
+                            verification_thread.start()
+                else:
+                    print(f"[{relay_id}] Failed to activate vacuum DO{do_channel}")
+            except Exception as e:
+                print(f"[{relay_id}] Error in vacuum auto-control: {e}")
+        
+        # Update previous state for next iteration
+        self.vacuum_di_previous_state[relay_id] = current_di_state
 
     def on_manual_do_button_clicked(self, relay_id: str, index: int):
         """Handle manual relay button click"""
