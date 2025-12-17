@@ -1,0 +1,13 @@
+# 1. Make script executable
+chmod +x /home/jetson/dev/modbus-relay-control/start_pokayoke.sh
+
+# 2. Install systemd service
+sudo cp /home/jetson/dev/modbus-relay-control/pokayoke.service /etc/systemd/system/
+
+# 3. Enable auto-start
+sudo systemctl daemon-reload
+sudo systemctl enable pokayoke.service
+
+# 4. Test it (optional before reboot)
+sudo systemctl start pokayoke.service
+sudo systemctl status pokayoke.service
