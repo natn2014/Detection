@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox,
     QSpinBox, QDoubleSpinBox, QTextEdit, QProgressBar, QFileDialog,
     QGroupBox, QGridLayout, QTableWidget, QTableWidgetItem, QMessageBox,
-    QSplitter, QCheckBox, QScrollArea
+    QSplitter, QCheckBox, QScrollArea, QInputDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 from PySide6.QtGui import QFont, QTextCursor, QPixmap, QIcon
@@ -314,9 +314,153 @@ class DatasetTab(QWidget):
         if file:
             self.data_yaml_path = file
             self.yaml_path_input.setText(file)
+    
+    def create_simple_structure_yaml(self, dataset_root):
+        """Create data.yaml for simple structure dataset (images/ and labels/ at root)"""
+        try:
+            images_folder = dataset_root / 'images'
+            labels_folder = dataset_root / 'labels'
+            
+            # Count images and labels
+            image_files = list(images_folder.glob('*.[jJ][pP][gG]')) + \
+                         list(images_folder.glob('*.[jJ][pP][eE][gG]')) + \
+                         list(images_folder.glob('*.[pP][nN][gG]')) + \
+                         list(images_folder.glob('*.[bB][mM][pP]')) + \
+                         list(images_folder.glob('*.[wW][eE][bB][pP]'))
+            
+            label_files = list(labels_folder.glob('*.txt'))
+            
+            total_images = len(image_files)
+            total_labels = len(label_files)
+            
+            if total_images == 0:
+                QMessageBox.warning(self, "Error", "No images found in images/ folder!")
+                return False
+            
+            if total_labels == 0:
+                QMessageBox.warning(self, "Error", "No label files found in labels/ folder!")
+                return False
+            
+            if total_images != total_labels:
+                reply = QMessageBox.question(
+                    self, 'Warning',
+                    f'Image count ({total_images}) does not match label count ({total_labels}).\n\n'
+                    'Some images may not have labels or vice versa.\n'
+                    'Continue anyway?',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
+                )
+                if reply == QMessageBox.No:
+                    return False
+            
+            # Try to detect class names from label files
+            class_ids = set()
+            for label_file in label_files[:100]:  # Sample first 100 files
+                try:
+                    with open(label_file, 'r') as f:
+                        for line in f:
+                            parts = line.strip().split()
+                            if parts:
+                                class_ids.add(int(parts[0]))
+                except:
+                    continue
+            
+            num_classes = len(class_ids) if class_ids else 1
+            class_names = [f'class_{i}' for i in range(num_classes)]
+            
+            # Try to read class names from classes.txt if it exists
+            classes_txt_path = dataset_root / 'classes.txt'
+            if classes_txt_path.exists():
+                try:
+                    with open(classes_txt_path, 'r') as f:
+                        file_class_names = [line.strip() for line in f.readlines() if line.strip()]
+                    if file_class_names:
+                        class_names = file_class_names
+                        num_classes = len(class_names)
+                except:
+                    pass
+            
+            # Ask user to confirm or edit class names
+            class_names_str = ', '.join(class_names)
+            class_names_input, ok = QInputDialog.getText(
+                self, 'Class Names',
+                f'Detected {num_classes} classes.\n\n'
+                f'Enter class names (comma-separated):',
+                text=class_names_str
+            )
+            
+            if ok and class_names_input.strip():
+                class_names = [name.strip() for name in class_names_input.split(',')]
+                num_classes = len(class_names)
+            elif not ok:
+                return False
+            
+            # Create data.yaml content
+            yaml_content = {
+                'path': str(dataset_root.absolute()),
+                'train': 'images',  # YOLO will automatically split
+                'val': 'images',    # YOLO will automatically split
+                'nc': num_classes,
+                'names': class_names
+            }
+            
+            # Add comment about split
+            yaml_path = dataset_root / 'data.yaml'
+            with open(yaml_path, 'w') as f:
+                f.write('# Auto-generated data.yaml for simple structure dataset\n')
+                f.write('# Dataset will be automatically split 80% train / 20% val during training\n')
+                f.write('# Use split parameter in training: model.train(data="data.yaml", split=0.8)\n\n')
+                yaml.dump(yaml_content, f, default_flow_style=False, sort_keys=False)
+            
+            self.data_yaml_path = str(yaml_path)
+            self.yaml_path_input.setText(str(yaml_path))
+            
+            QMessageBox.information(
+                self, 'Success',
+                f'data.yaml created successfully!\n\n'
+                f'Location: {yaml_path}\n'
+                f'Total images: {total_images}\n'
+                f'Total labels: {total_labels}\n'
+                f'Classes: {num_classes}\n\n'
+                f'Note: Dataset will be split 80% train / 20% val during training.'
+            )
+            
+            return True
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to create data.yaml:\n{str(e)}")
+            return False
             
     def validate_dataset(self):
         """Validate dataset structure and load statistics"""
+        # Check if we need to auto-create data.yaml for simple structure
+        if not self.data_yaml_path and self.dataset_path:
+            # Check if dataset uses simple structure (images/ and labels/ at root)
+            dataset_root = Path(self.dataset_path)
+            images_folder = dataset_root / 'images'
+            labels_folder = dataset_root / 'labels'
+            
+            if images_folder.exists() and labels_folder.exists():
+                # Simple structure detected - offer to create data.yaml
+                reply = QMessageBox.question(
+                    self, 'Simple Dataset Structure Detected',
+                    'This dataset uses the simple structure (images/ and labels/ at root).\n\n'
+                    'Would you like to automatically create a data.yaml file\n'
+                    'with 80% train / 20% validation split?',
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                
+                if reply == QMessageBox.Yes:
+                    if not self.create_simple_structure_yaml(dataset_root):
+                        return
+                else:
+                    QMessageBox.warning(self, "Warning", "Please select or create a data.yaml file first!")
+                    return
+            else:
+                QMessageBox.warning(self, "Warning", "Please select data.yaml file first!")
+                return
+        
         if not self.data_yaml_path:
             QMessageBox.warning(self, "Warning", "Please select data.yaml file first!")
             return
@@ -343,53 +487,121 @@ class DatasetTab(QWidget):
             
             dataset_root = Path(data_config.get('path', Path(self.data_yaml_path).parent))
             
-            # Count images in train/images folder
-            train_images_path = dataset_root / 'train' / 'images'
-            train_labels_path = dataset_root / 'train' / 'labels'
-            train_count = len(list(train_images_path.glob('*'))) if train_images_path.exists() else 0
-            train_labels_count = len(list(train_labels_path.glob('*'))) if train_labels_path.exists() else 0
+            # Check if this is a simple structure (images/ and labels/ at root)
+            is_simple_structure = False
+            simple_images_path = dataset_root / 'images'
+            simple_labels_path = dataset_root / 'labels'
             
-            # Count images in val/images folder OR valid/images folder
-            val_images_path = dataset_root / 'val' / 'images'
-            val_labels_path = dataset_root / 'val' / 'labels'
-            
-            # Check for 'valid' as alternative
-            if not val_images_path.exists():
-                val_images_path = dataset_root / 'valid' / 'images'
-                val_labels_path = dataset_root / 'valid' / 'labels'
-            
-            val_count = len(list(val_images_path.glob('*'))) if val_images_path.exists() else 0
-            val_labels_count = len(list(val_labels_path.glob('*'))) if val_labels_path.exists() else 0
-            
-            # Count images in test/images folder (optional)
-            test_images_path = dataset_root / 'test' / 'images'
-            test_labels_path = dataset_root / 'test' / 'labels'
-            test_count = len(list(test_images_path.glob('*'))) if test_images_path.exists() else 0
-            test_labels_count = len(list(test_labels_path.glob('*'))) if test_labels_path.exists() else 0
+            if simple_images_path.exists() and simple_labels_path.exists():
+                is_simple_structure = True
+                # For simple structure, count images at root level
+                image_files_list = [f for f in simple_images_path.glob('*') if f.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp', '.webp']]
+                train_count = len(image_files_list)
+                
+                # Check for matching label files
+                train_labels_count = 0
+                for img_file in image_files_list:
+                    label_file = simple_labels_path / f'{img_file.stem}.txt'
+                    if label_file.exists():
+                        train_labels_count += 1
+                
+                val_count = 0
+                val_labels_count = 0
+                test_count = 0
+                test_labels_count = 0
+            else:
+                # Count images in train/images folder
+                train_images_path = dataset_root / 'train' / 'images'
+                train_labels_path = dataset_root / 'train' / 'labels'
+                train_image_files = list(train_images_path.glob('*')) if train_images_path.exists() else []
+                train_count = len(train_image_files)
+                
+                # Check for matching label files in train
+                train_labels_count = 0
+                for img_file in train_image_files:
+                    label_file = train_labels_path / f'{img_file.stem}.txt'
+                    if label_file.exists():
+                        train_labels_count += 1
+                
+                # Count images in val/images folder OR valid/images folder
+                val_images_path = dataset_root / 'val' / 'images'
+                val_labels_path = dataset_root / 'val' / 'labels'
+                
+                # Check for 'valid' as alternative
+                if not val_images_path.exists():
+                    val_images_path = dataset_root / 'valid' / 'images'
+                    val_labels_path = dataset_root / 'valid' / 'labels'
+                
+                val_image_files = list(val_images_path.glob('*')) if val_images_path.exists() else []
+                val_count = len(val_image_files)
+                
+                # Check for matching label files in val
+                val_labels_count = 0
+                for img_file in val_image_files:
+                    label_file = val_labels_path / f'{img_file.stem}.txt'
+                    if label_file.exists():
+                        val_labels_count += 1
+                
+                # Count images in test/images folder (optional)
+                test_images_path = dataset_root / 'test' / 'images'
+                test_labels_path = dataset_root / 'test' / 'labels'
+                test_image_files = list(test_images_path.glob('*')) if test_images_path.exists() else []
+                test_count = len(test_image_files)
+                
+                # Check for matching label files in test
+                test_labels_count = 0
+                for img_file in test_image_files:
+                    label_file = test_labels_path / f'{img_file.stem}.txt'
+                    if label_file.exists():
+                        test_labels_count += 1
             
             # Validate that images and labels match
             validation_issues = []
-            if train_count > 0 and train_count != train_labels_count:
-                validation_issues.append(f"Train: {train_count} images but {train_labels_count} labels")
-            if val_count > 0 and val_count != val_labels_count:
-                validation_issues.append(f"Val: {val_count} images but {val_labels_count} labels")
-            if test_count > 0 and test_count != test_labels_count:
-                validation_issues.append(f"Test: {test_count} images but {test_labels_count} labels")
+            if is_simple_structure:
+                if train_count > 0 and train_count != train_labels_count:
+                    validation_issues.append(f"Images: {train_count} but Labels: {train_labels_count}")
+                # Calculate estimated split
+                estimated_train = int(train_count * 0.8)
+                estimated_val = train_count - estimated_train
+            else:
+                if train_count > 0 and train_count != train_labels_count:
+                    validation_issues.append(f"Train: {train_count} images but {train_labels_count} labels")
+                if val_count > 0 and val_count != val_labels_count:
+                    validation_issues.append(f"Val: {val_count} images but {val_labels_count} labels")
+                if test_count > 0 and test_count != test_labels_count:
+                    validation_issues.append(f"Test: {test_count} images but {test_labels_count} labels")
             
             # Update statistics table
             self.stats_table.setRowCount(0)
-            stats = [
-                ("Number of Classes", str(data_config.get('nc', 0))),
-                ("Class Names", ", ".join(data_config.get('names', {}).values() if isinstance(data_config.get('names'), dict) else data_config.get('names', []))),
-                ("Train Images", str(train_count)),
-                ("Train Labels", str(train_labels_count)),
-                ("Validation Images", str(val_count)),
-                ("Validation Labels", str(val_labels_count)),
-                ("Test Images", str(test_count)),
-                ("Test Labels", str(test_labels_count)),
-                ("Total Images", str(train_count + val_count + test_count)),
-                ("Dataset Path", str(dataset_root)),
-            ]
+            
+            if is_simple_structure:
+                estimated_train = int(train_count * 0.8)
+                estimated_val = train_count - estimated_train
+                stats = [
+                    ("Dataset Structure", "Simple (auto-split)"),
+                    ("Number of Classes", str(data_config.get('nc', 0))),
+                    ("Class Names", ", ".join(data_config.get('names', {}).values() if isinstance(data_config.get('names'), dict) else data_config.get('names', []))),
+                    ("Total Images", str(train_count)),
+                    ("Total Labels", str(train_labels_count)),
+                    ("Estimated Train (80%)", str(estimated_train)),
+                    ("Estimated Val (20%)", str(estimated_val)),
+                    ("Test Images", "0 (N/A)"),
+                    ("Dataset Path", str(dataset_root)),
+                ]
+            else:
+                stats = [
+                    ("Dataset Structure", "Full (train/val/test)"),
+                    ("Number of Classes", str(data_config.get('nc', 0))),
+                    ("Class Names", ", ".join(data_config.get('names', {}).values() if isinstance(data_config.get('names'), dict) else data_config.get('names', []))),
+                    ("Train Images", str(train_count)),
+                    ("Train Labels", str(train_labels_count)),
+                    ("Validation Images", str(val_count)),
+                    ("Validation Labels", str(val_labels_count)),
+                    ("Test Images", str(test_count)),
+                    ("Test Labels", str(test_labels_count)),
+                    ("Total Images", str(train_count + val_count + test_count)),
+                    ("Dataset Path", str(dataset_root)),
+                ]
             
             for prop, value in stats:
                 row = self.stats_table.rowCount()
@@ -404,7 +616,12 @@ class DatasetTab(QWidget):
             
             # Update chart
             if MATPLOTLIB_AVAILABLE:
-                self.update_chart(train_count, val_count, test_count, data_config.get('names', {}))
+                if is_simple_structure:
+                    estimated_train = int(train_count * 0.8)
+                    estimated_val = train_count - estimated_train
+                    self.update_chart(estimated_train, estimated_val, 0, data_config.get('names', {}))
+                else:
+                    self.update_chart(train_count, val_count, test_count, data_config.get('names', {}))
             
             # Success message
             if not validation_issues:
@@ -453,6 +670,13 @@ class DatasetTab(QWidget):
             
             # Get all label directories
             label_dirs = []
+            
+            # First, check for simple structure (labels at root)
+            simple_labels = dataset_root / 'labels'
+            if simple_labels.exists():
+                label_dirs.append(simple_labels)
+            
+            # Then check for full structure (train/val/test)
             train_labels = dataset_root / 'train' / 'labels'
             if train_labels.exists():
                 label_dirs.append(train_labels)
